@@ -4,16 +4,19 @@ permissions:
   contents: read
 jobs:
   test:
-    runs-on: ubuntu-22.04
+    runs-on: ${{ github.event.repository.private && github.event_name == 'push' && vars.TGTIME_WSL_CI == '1' && 'tgtime-wsl' || 'ubuntu-22.04' }}
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - run: rustup update stable && rustup default stable
+      - if: ${{ runner.environment == 'github-hosted' }}
+        run: rustup update stable && rustup default stable
       - run: rustup component add rustfmt clippy
       - run: cargo fmt --check
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
       - run: cargo build --release --locked
-      - run: |
+      - if: ${{ runner.environment == 'github-hosted' }}
+        run: |
           context="$(mktemp -d)"
           cp target/release/tgtime Dockerfile "$context/"
           docker build -t tgtime-rust:ci "$context"
