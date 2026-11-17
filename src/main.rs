@@ -343,6 +343,22 @@ async fn honor_flood(data: &Path, seconds: u32) -> StartupResult<()> {
     Ok(())
 }
 
+fn price_client(proxy: Option<&str>) -> StartupResult<reqwest::Client> {
+    let mut builder = reqwest::Client::builder()
+        .no_proxy()
+        .user_agent(concat!("TGTime/", env!("CARGO_PKG_VERSION")))
+        .timeout(Duration::from_secs(6));
+    if let Some(url) = proxy {
+        builder = builder.proxy(
+            Proxy::all(url.replacen("socks5://", "socks5h://", 1))
+                .map_err(|_| "Invalid price proxy configuration")?,
+        );
+    }
+    builder
+        .build()
+        .map_err(|_| "Cannot initialize price client")
+}
+
 async fn run(config: Config, check: bool) -> StartupResult<()> {
     fs::create_dir_all(&config.data).map_err(|_| "Cannot open TGTime data directory")?;
     let lock = fs::OpenOptions::new()
@@ -357,20 +373,7 @@ async fn run(config: Config, check: bool) -> StartupResult<()> {
     let prices = config
         .proxies
         .iter()
-        .map(|url| {
-            let mut builder = reqwest::Client::builder()
-                .no_proxy()
-                .timeout(Duration::from_secs(6));
-            if let Some(url) = url {
-                builder = builder.proxy(
-                    Proxy::all(url.replacen("socks5://", "socks5h://", 1))
-                        .map_err(|_| "Invalid price proxy configuration")?,
-                );
-            }
-            builder
-                .build()
-                .map_err(|_| "Cannot initialize price client")
-        })
+        .map(|url| price_client(url.as_deref()))
         .collect::<StartupResult<Vec<_>>>()?;
     let mut cache = read_json(&config.data.join("prices.json")).unwrap_or_default();
     if let Some(deadline) = read_json::<f64>(&config.data.join("flood.json"))
@@ -485,6 +488,35 @@ fn healthy(value: Option<&Value>, current: f64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn price_requests_identify_the_application() {
+        use std::io::{BufRead, BufReader, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
+            let headers = BufReader::new(&socket)
+                .lines()
+                .map_while(Result::ok)
+                .take_while(|line| !line.is_empty())
+                .collect::<Vec<_>>();
+            assert!(
+                headers
+                    .iter()
+                    .any(|value| value.to_lowercase().starts_with("user-agent: tgtime/"))
+            );
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+                .unwrap();
+        });
+        let response = price_client(None).unwrap().get(url).send().await.unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        server.join().unwrap();
+    }
 
     #[test]
     fn matches_the_legacy_clock_and_bio() {
