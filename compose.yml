@@ -1,0 +1,21 @@
+services:
+  tgtime:
+    image: tgtime-rust:local
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: [CMD, /usr/local/bin/tgtime, --health]
+      interval: 30s
+      timeout: 3s
+      start_period: 2m
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"

@@ -1,0 +1,20 @@
+name: Rust
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup update stable && rustup default stable
+      - run: rustup component add rustfmt clippy
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked
+      - run: cargo build --release --locked
+      - run: |
+          context="$(mktemp -d)"
+          cp target/release/tgtime Dockerfile "$context/"
+          docker build -t tgtime-rust:ci "$context"
+          docker run --rm tgtime-rust:ci --help
